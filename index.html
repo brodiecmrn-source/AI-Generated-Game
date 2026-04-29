@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scrolls Legacy - Play + Edit Sandbox</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+    .layout { display: grid; grid-template-columns: 1fr 1fr; min-height: 100vh; }
+    .panel { padding: 12px; box-sizing: border-box; }
+    textarea { width: 100%; height: 82vh; background: #0b1020; color: #d1fae5; border: 1px solid #374151; border-radius: 8px; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    iframe { width: 100%; height: 82vh; border: 1px solid #374151; border-radius: 8px; background: #000; }
+    .actions { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+    button, a.button-link { background: #2563eb; color: white; border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; text-decoration: none; display: inline-block; }
+    button.secondary { background: #4b5563; }
+    button.success { background: #059669; }
+    @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } textarea, iframe { height: 40vh; } }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <section class="panel">
+      <h2>Game Code (editable)</h2>
+      <div class="actions">
+        <button id="playBtn" class="success">▶ Play Game</button>
+        <button id="runBtn">Run / Refresh</button>
+        <button id="resetBtn" class="secondary">Reset Default</button>
+        <button id="downloadBtn" class="secondary">Download HTML</button>
+        <button id="downloadZipBtn" class="secondary">Download ZIP Project</button>
+      </div>
+      <p>Edit code, click <strong>Play Game</strong>, then click inside preview and use arrow keys (+ Space/Up to jump). You can download either a single HTML file or a full ZIP project.</p>
+      <textarea id="code"></textarea>
+    </section>
+    <section class="panel">
+      <h2>Live Preview</h2>
+      <iframe id="preview" sandbox="allow-scripts" tabindex="0" title="Game preview"></iframe>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script>
+    const defaultGame = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Scrolls Legacy</title>
+<style>
+body{margin:0;background:#1f2937;color:#fff;font-family:system-ui}
+#wrap{max-width:900px;margin:0 auto;padding:10px}
+canvas{display:block;margin:0 auto;background:#0f172a;border-radius:8px}
+#hint{opacity:.9;text-align:center;margin-top:8px}
+</style></head><body><div id="wrap"><canvas id="c" width="860" height="420"></canvas><div id="hint">Move: ← → | Jump: Space / ↑ | Collect all scrolls</div></div>
+<script>
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+const hero = { x: 60, y: 340, w: 26, h: 26, vy: 0, onGround: false };
+const scrolls = [{x:200,y:360,collected:false},{x:360,y:320,collected:false},{x:560,y:360,collected:false},{x:740,y:300,collected:false}];
+const platforms = [{x:300,y:350,w:120,h:14},{x:680,y:330,w:120,h:14}];
+const keys = new Set();
+let score = 0;
+addEventListener('keydown', e => keys.add(e.key));
+addEventListener('keyup', e => keys.delete(e.key));
+function overlap(a,b){return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y}
+function tick(){
+  if(keys.has('ArrowRight')) hero.x += 3;
+  if(keys.has('ArrowLeft')) hero.x -= 3;
+  if((keys.has(' ') || keys.has('ArrowUp')) && hero.onGround){ hero.vy = -10; hero.onGround = false; }
+  hero.vy += 0.5; hero.y += hero.vy; hero.onGround = false;
+
+  const floor = {x:0,y:390,w:cvs.width,h:30};
+  if(overlap(hero, floor) && hero.vy >= 0){ hero.y = floor.y - hero.h; hero.vy = 0; hero.onGround = true; }
+  for(const p of platforms){ if(overlap(hero,p) && hero.vy >=0 && hero.y + hero.h - hero.vy <= p.y + 2){ hero.y = p.y - hero.h; hero.vy = 0; hero.onGround = true; } }
+
+  hero.x = Math.max(0, Math.min(cvs.width - hero.w, hero.x));
+
+  for(const s of scrolls){
+    if(!s.collected){
+      const b={x:s.x,y:s.y,w:18,h:18};
+      if(overlap(hero,b)){ s.collected=true; score++; }
+    }
+  }
+
+  ctx.fillStyle='#0f172a'; ctx.fillRect(0,0,cvs.width,cvs.height);
+  ctx.fillStyle='#374151'; ctx.fillRect(0,390,cvs.width,30);
+  for(const p of platforms){ ctx.fillStyle='#475569'; ctx.fillRect(p.x,p.y,p.w,p.h); }
+  ctx.fillStyle='#22d3ee'; ctx.fillRect(hero.x, hero.y, hero.w, hero.h);
+  for(const s of scrolls){ if(!s.collected){ ctx.fillStyle='#f59e0b'; ctx.fillRect(s.x,s.y,18,18); } }
+  ctx.fillStyle='#fff'; ctx.font='20px system-ui'; ctx.fillText('Scrolls: '+score+'/'+scrolls.length, 12, 28);
+  if(score===scrolls.length){ ctx.fillText('You collected all scrolls! 🎉', 280, 28); }
+  requestAnimationFrame(tick);
+}
+tick();
+<\/script></body></html>`;
+
+    const codeEl = document.getElementById('code');
+    const iframe = document.getElementById('preview');
+    const STORAGE_KEY = 'scrolls-game-code';
+    codeEl.value = localStorage.getItem(STORAGE_KEY) || defaultGame;
+
+    function run() {
+      const html = codeEl.value;
+      localStorage.setItem(STORAGE_KEY, html);
+      iframe.srcdoc = html;
+      setTimeout(() => iframe.focus(), 0);
+    }
+
+    function downloadCurrentGame() {
+      const blob = new Blob([codeEl.value], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'scrolls-legacy-game.html';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+
+
+    async function downloadZipProject() {
+      if (!window.JSZip) {
+        alert('ZIP library failed to load. Please check your internet connection and try again.');
+        return;
+      }
+
+      const zip = new JSZip();
+      const assets = zip.folder('assets');
+      const gameHtml = codeEl.value;
+      const readme = `# Scrolls Legacy (Exported Project)
+
+## Run
+1. Unzip this folder.
+2. Open \`index.html\` in a browser.
+
+## Files
+- \`index.html\`: your exported game code
+- \`assets/\`: place images/audio here if you expand the game
+`;
+
+      zip.file('index.html', gameHtml);
+      zip.file('README.md', readme);
+      assets.file('.gitkeep', '');
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'scrolls-legacy-project.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('playBtn').addEventListener('click', run);
+    document.getElementById('runBtn').addEventListener('click', run);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      codeEl.value = defaultGame;
+      run();
+    });
+    document.getElementById('downloadBtn').addEventListener('click', downloadCurrentGame);
+    document.getElementById('downloadZipBtn').addEventListener('click', () => {
+      downloadZipProject().catch((err) => {
+        console.error(err);
+        alert('Failed to build ZIP project.');
+      });
+    });
+
+    codeEl.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        run();
+      }
+    });
+
+    run();
+  </script>
+</body>
+</html>
