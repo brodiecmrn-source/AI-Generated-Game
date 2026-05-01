@@ -1,0 +1,35 @@
+{
+  "name": "odyssey-of-the-rings-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop wrapper for Odyssey of the Rings HTML prototype",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win portable",
+    "dist:dir": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.odysseyoftherings.playtest",
+    "productName": "Odyssey of the Rings Playtest",
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
+  }
+}
