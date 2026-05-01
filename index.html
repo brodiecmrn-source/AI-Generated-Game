@@ -41,35 +41,105 @@
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script>
     const defaultGame = `<!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Scrolls Legacy</title>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Scrolls Legacy: Phase 1</title>
 <style>
-body{margin:0;background:#1f2937;color:#fff;font-family:system-ui}
-#wrap{max-width:900px;margin:0 auto;padding:10px}
-canvas{display:block;margin:0 auto;background:#0f172a;border-radius:8px}
-#hint{opacity:.9;text-align:center;margin-top:8px}
-</style></head><body><div id="wrap"><canvas id="c" width="860" height="420"></canvas><div id="hint">Move: ← → | Jump: Space / ↑ | Collect all scrolls</div></div>
+:root{--bg:#0f1117;--panel:#1a1c24;--ink:#e8dec8;--muted:#b7aa8d;--steel:#6f7d8b;--gold:#bc9b5d;--blood:#7a2d2d;}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at 20% 20%,#1c1f2b,#0e1015 70%);color:var(--ink);font-family:Georgia,serif}
+#wrap{max-width:980px;margin:0 auto;padding:12px}
+#hud{display:flex;justify-content:space-between;align-items:center;background:linear-gradient(#2a2530,#1a1822);border:1px solid #4e4234;border-radius:8px;padding:8px 10px;box-shadow:0 0 0 1px #000 inset}
+#left,#right{display:flex;gap:14px;flex-wrap:wrap;font-size:14px}
+.tag{color:var(--muted)}
+canvas{display:block;margin:10px auto 8px;background:#0a0c12;border:1px solid #4e4234;border-radius:8px}
+#hint{opacity:.92;text-align:center;color:var(--muted);font-size:13px}
+</style></head><body><div id="wrap">
+<div id="hud"><div id="left"></div><div id="right"></div></div>
+<canvas id="c" width="940" height="420"></canvas>
+<div id="hint">Move: ← → | Jump: Space/↑ | Sprint: Shift | Enter town gate to open vendor hub.</div>
+</div>
 <script>
 const cvs = document.getElementById('c');
 const ctx = cvs.getContext('2d');
-const hero = { x: 60, y: 340, w: 26, h: 26, vy: 0, onGround: false };
-const scrolls = [{x:200,y:360,collected:false},{x:360,y:320,collected:false},{x:560,y:360,collected:false},{x:740,y:300,collected:false}];
-const platforms = [{x:300,y:350,w:120,h:14},{x:680,y:330,w:120,h:14}];
+const hero = { x: 60, y: 338, w: 24, h: 30, vy: 0, onGround: false, hp: 100 };
 const keys = new Set();
 let score = 0;
-addEventListener('keydown', e => keys.add(e.key));
+const state = { zone:'wilderness', sprintEnabled:true, sprintDrain:0.6, sprintRegen:0.32, stamina:100, maxStamina:100 };
+
+// Phase 1 scaffolding: main town + vendors + progression baseline.
+const player = {
+  className: 'Knight',
+  level: 1,
+  xp: 0,
+  skills: { blade: 20, athletics: 18, mysticism: 10 },
+  perks: [],
+};
+
+const town = {
+  name: 'Dreadmoor',
+  vendors: [
+    { id: 'smith', name: 'Grim Smith Varo', type: 'weapons', stockTier: 1 },
+    { id: 'alch', name: 'Sister Nyra', type: 'alchemy', stockTier: 1 },
+    { id: 'scribe', name: 'Brother Kel', type: 'spells', stockTier: 1 },
+  ],
+  rumors: ['A pale count hunts below the chapel.', 'The crypt doors whisper at night.']
+};
+
+const scrolls = [{x:200,y:360,collected:false},{x:360,y:320,collected:false},{x:560,y:360,collected:false},{x:740,y:300,collected:false}];
+const platforms = [{x:300,y:350,w:140,h:14},{x:680,y:330,w:140,h:14}];
+const townGate = {x:880,y:346,w:36,h:44};
+
+addEventListener('keydown', e => {
+  keys.add(e.key);
+  if (e.key === 'e' || e.key === 'E') {
+    if (state.zone === 'town') state.zone = 'wilderness';
+  }
+});
 addEventListener('keyup', e => keys.delete(e.key));
+
 function overlap(a,b){return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y}
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+function updateHud(){
+  const left = document.getElementById('left');
+  const right = document.getElementById('right');
+  left.innerHTML = '<span><span class="tag">Class</span> ' + player.className + '</span>' +
+    '<span><span class="tag">Lvl</span> ' + player.level + '</span>' +
+    '<span><span class="tag">Zone</span> ' + state.zone + '</span>' +
+    '<span><span class="tag">Scrolls</span> ' + score + '/' + scrolls.length + '</span>';
+  right.innerHTML = '<span><span class="tag">Stamina</span> ' + Math.round(state.stamina) + '/' + state.maxStamina + '</span>' +
+    '<span><span class="tag">Athletics</span> ' + player.skills.athletics + '</span>' +
+    '<span><span class="tag">Vendors</span> ' + town.vendors.length + '</span>';
+}
+
 function tick(){
-  if(keys.has('ArrowRight')) hero.x += 3;
-  if(keys.has('ArrowLeft')) hero.x -= 3;
-  if((keys.has(' ') || keys.has('ArrowUp')) && hero.onGround){ hero.vy = -10; hero.onGround = false; }
-  hero.vy += 0.5; hero.y += hero.vy; hero.onGround = false;
+  const movingRight = keys.has('ArrowRight');
+  const movingLeft = keys.has('ArrowLeft');
+  const wantsSprint = keys.has('Shift');
+  const canSprint = state.sprintEnabled && state.stamina > 1;
+  const sprinting = wantsSprint && canSprint && (movingLeft || movingRight);
+
+  const walkSpeed = 2.9;
+  const sprintSpeed = 4.7;
+  const speed = sprinting ? sprintSpeed : walkSpeed;
+
+  if(movingRight) hero.x += speed;
+  if(movingLeft) hero.x -= speed;
+
+  if (sprinting) {
+    state.stamina = clamp(state.stamina - state.sprintDrain, 0, state.maxStamina);
+    player.skills.athletics = Math.min(100, player.skills.athletics + 0.0025);
+  } else {
+    state.stamina = clamp(state.stamina + state.sprintRegen, 0, state.maxStamina);
+  }
+
+  if((keys.has(' ') || keys.has('ArrowUp')) && hero.onGround){ hero.vy = -10.2; hero.onGround = false; }
+  hero.vy += 0.48; hero.y += hero.vy; hero.onGround = false;
 
   const floor = {x:0,y:390,w:cvs.width,h:30};
   if(overlap(hero, floor) && hero.vy >= 0){ hero.y = floor.y - hero.h; hero.vy = 0; hero.onGround = true; }
   for(const p of platforms){ if(overlap(hero,p) && hero.vy >=0 && hero.y + hero.h - hero.vy <= p.y + 2){ hero.y = p.y - hero.h; hero.vy = 0; hero.onGround = true; } }
 
-  hero.x = Math.max(0, Math.min(cvs.width - hero.w, hero.x));
+  hero.x = clamp(hero.x, 0, cvs.width - hero.w);
 
   for(const s of scrolls){
     if(!s.collected){
@@ -78,15 +148,34 @@ function tick(){
     }
   }
 
-  ctx.fillStyle='#0f172a'; ctx.fillRect(0,0,cvs.width,cvs.height);
-  ctx.fillStyle='#374151'; ctx.fillRect(0,390,cvs.width,30);
-  for(const p of platforms){ ctx.fillStyle='#475569'; ctx.fillRect(p.x,p.y,p.w,p.h); }
-  ctx.fillStyle='#22d3ee'; ctx.fillRect(hero.x, hero.y, hero.w, hero.h);
-  for(const s of scrolls){ if(!s.collected){ ctx.fillStyle='#f59e0b'; ctx.fillRect(s.x,s.y,18,18); } }
-  ctx.fillStyle='#fff'; ctx.font='20px system-ui'; ctx.fillText('Scrolls: '+score+'/'+scrolls.length, 12, 28);
-  if(score===scrolls.length){ ctx.fillText('You collected all scrolls! 🎉', 280, 28); }
+  if (overlap(hero, townGate)) state.zone = 'town';
+
+  // Render
+  ctx.fillStyle='#090b10'; ctx.fillRect(0,0,cvs.width,cvs.height);
+  ctx.fillStyle='#1f2433'; ctx.fillRect(0,390,cvs.width,30);
+  for(const p of platforms){ ctx.fillStyle='#3f465b'; ctx.fillRect(p.x,p.y,p.w,p.h); }
+
+  // Town gate
+  ctx.fillStyle = '#5d4b35'; ctx.fillRect(townGate.x,townGate.y,townGate.w,townGate.h);
+  ctx.fillStyle = '#d3b07a'; ctx.fillRect(townGate.x+4,townGate.y+6, townGate.w-8, 4);
+
+  ctx.fillStyle='#7ad0d0'; ctx.fillRect(hero.x, hero.y, hero.w, hero.h);
+  for(const s of scrolls){ if(!s.collected){ ctx.fillStyle='#bc9b5d'; ctx.fillRect(s.x,s.y,18,18); } }
+
+  ctx.fillStyle='#e8dec8'; ctx.font='18px Georgia';
+  if(state.zone === 'town'){
+    ctx.fillText('Town: ' + town.name + ' (E to return to wilds)', 12, 24);
+    ctx.fillText('Vendors: ' + town.vendors.map(v=>v.name).join(' | '), 12, 48);
+  } else {
+    ctx.fillText('Wilderness: bring relics home alive.', 12, 24);
+  }
+
+  if(score===scrolls.length){ ctx.fillText('All scrolls recovered. The crypt waits…', 300, 24); }
+
+  updateHud();
   requestAnimationFrame(tick);
 }
+updateHud();
 tick();
 <\/script></body></html>`;
 
@@ -113,8 +202,6 @@ tick();
       a.remove();
       URL.revokeObjectURL(url);
     }
-
-
 
     async function downloadZipProject() {
       if (!window.JSZip) {
