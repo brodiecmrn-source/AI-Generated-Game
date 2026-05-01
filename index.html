@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Odyssey of the Rings - Play + Edit Sandbox</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+    .layout { display: grid; grid-template-columns: 1fr 1fr; min-height: 100vh; }
+    .panel { padding: 12px; box-sizing: border-box; }
+    textarea { width: 100%; height: 82vh; background: #0b1020; color: #d1fae5; border: 1px solid #374151; border-radius: 8px; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    iframe { width: 100%; height: 82vh; border: 1px solid #374151; border-radius: 8px; background: #000; }
+    .actions { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+    button, a.button-link { background: #2563eb; color: white; border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; text-decoration: none; display: inline-block; }
+    button.secondary { background: #4b5563; }
+    button.success { background: #059669; }
+    @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } textarea, iframe { height: 40vh; } }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <section class="panel">
+      <h2>Game Code (editable)</h2>
+      <div class="actions">
+        <button id="playBtn" class="success">▶ Play Game</button>
+        <button id="runBtn">Run / Refresh</button>
+        <button id="resetBtn" class="secondary">Reset Default</button>
+        <button id="downloadBtn" class="secondary">Download HTML</button>
+        <button id="downloadZipBtn" class="secondary">Download ZIP Project</button>
+        <button id="clearProgressBtn" class="secondary">Clear Progress</button>
+        <button id="downloadPlaytestBtn" class="success">Download Playtest Build</button>
+        <button id="generateLinkBtn" class="secondary">Generate Download Link</button>
+      </div>
+      <p>Edit code, click <strong>Play Game</strong>, then click inside preview and use arrow keys (+ Space/Up to jump). For easiest desktop playtesting, click <strong>Download Playtest Build</strong> or generate a direct download link.</p>
+      <p id="downloadLinkWrap" style="display:none;margin-top:6px">Your link: <a id="downloadLink" href="#" download>Download Your Build</a></p>
+      <textarea id="code"></textarea>
+    </section>
+    <section class="panel">
+      <h2>Live Preview</h2>
+      <iframe id="preview" sandbox="allow-scripts" tabindex="0" title="Game preview"></iframe>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script>
+    const defaultGame = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Odyssey of the Rings: Phase 1</title>
+<style>
+:root{--bg:#0f1117;--panel:#1a1c24;--ink:#e8dec8;--muted:#b7aa8d;--steel:#6f7d8b;--gold:#bc9b5d;--blood:#7a2d2d;}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at 20% 20%,#1c1f2b,#0e1015 70%);color:var(--ink);font-family:Georgia,serif}
+#wrap{max-width:980px;margin:0 auto;padding:12px}
+#hud{display:flex;justify-content:space-between;align-items:center;background:linear-gradient(#2a2530,#1a1822);border:1px solid #4e4234;border-radius:8px;padding:8px 10px;box-shadow:0 0 0 1px #000 inset}
+#left,#right{display:flex;gap:14px;flex-wrap:wrap;font-size:14px}
+.tag{color:var(--muted)}
+canvas{display:block;margin:10px auto 8px;background:#0a0c12;border:1px solid #4e4234;border-radius:8px}
+#hint{opacity:.92;text-align:center;color:var(--muted);font-size:13px}
+</style></head><body><div id="wrap">
+<div id="hud"><div id="left"></div><div id="right"></div></div><div id="townPanel" style="display:none;margin-top:8px;padding:8px;border:1px solid #4e4234;background:#17141d;border-radius:6px;color:#d9c7a2;font-size:13px"></div><div id="helpPanel" style="display:none;margin-top:8px;padding:8px;border:1px solid #364152;background:#111723;border-radius:6px;color:#c8d6ef;font-size:13px"></div><div id="questPanel" style="margin-top:8px;padding:8px;border:1px solid #3f3a32;background:#111017;border-radius:6px;color:#d9c7a2;font-size:13px"></div><div id="toast" style="display:none;margin-top:8px;padding:6px 8px;border:1px solid #6c5a3f;background:#211b14;border-radius:6px;color:#e6cf9e;font-size:13px"></div>
+<canvas id="c" width="940" height="420"></canvas>
+<div id="hint">Move: ← → | Jump: Space/↑ | Sprint: Shift | T town panel | B buy | R rumor/quest | H help</div>
+</div>
+<script>
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+const hero = { x: 60, y: 338, w: 24, h: 30, vy: 0, onGround: false, hp: 100 };
+const keys = new Set();
+let score = 0;
+const state = { zone:'wilderness', sprintEnabled:true, sprintDrain:0.6, sprintRegen:0.32, stamina:100, maxStamina:100, selectedClass:false };
+const PROG_KEY = 'scrolls-phase2-progress';
+
+// Phase 1 scaffolding: main town + vendors + progression baseline.
+const player = {
+  className: 'Unchosen',
+  level: 1,
+  xp: 0,
+  skillXP: { blade: 0, athletics: 0, mysticism: 0 },
+  skills: { blade: 10, athletics: 10, mysticism: 10 },
+  perks: [],
+  gold: 40,
+  inventory: [],
+  reputation: 0,
+};
+const classes = {
+  Knight: { blade: 10, athletics: 6, mysticism: 0 },
+  Mage: { blade: 0, athletics: 2, mysticism: 12 },
+  Thief: { blade: 6, athletics: 10, mysticism: 2 },
+};
+const perkTable = {
+  athletics: [{lvl:25,id:'Wind Runner',desc:'Sprint drains less stamina.'},{lvl:50,id:'Courier Stride',desc:'Sprint speed increased.'}],
+  blade: [{lvl:25,id:'Edge Sense',desc:'Better blade precision.'},{lvl:50,id:'Rending Cut',desc:'Armor-piercing blows.'}],
+  mysticism: [{lvl:25,id:'Aether Thread',desc:'Spells are easier to channel.'}]
+};
+
+const town = {
+  name: 'Dreadmoor',
+  vendors: [
+    { id: 'smith', name: 'Grim Smith Varo', type: 'weapons', stockTier: 1 },
+    { id: 'alch', name: 'Sister Nyra', type: 'alchemy', stockTier: 1 },
+    { id: 'scribe', name: 'Brother Kel', type: 'spells', stockTier: 1 },
+  ],
+  rumors: ['A pale count hunts below the chapel.', 'The crypt doors whisper at night.']
+};
+
+const quests = [
+  {id:'q_vampire', name:'Whispers Below Chapel', status:'NotStarted', stage:0, objective:'Speak with Sister Nyra in Dreadmoor.'},
+  {id:'q_relic', name:'Relic Recovery', status:'NotStarted', stage:0, objective:'Recover all field scrolls.'}
+];
+
+
+const scrolls = [{x:200,y:360,collected:false},{x:360,y:320,collected:false},{x:560,y:360,collected:false},{x:740,y:300,collected:false}];
+const platforms = [{x:300,y:350,w:140,h:14},{x:680,y:330,w:140,h:14}];
+const townGate = {x:880,y:346,w:36,h:44};
+
+addEventListener('keydown', e => {
+  keys.add(e.key);
+  if (e.key === 'e' || e.key === 'E') { if (state.zone === 'town') state.zone = 'wilderness'; }
+  if (e.key === 't' || e.key === 'T') {
+    const nearGate = overlap(hero, townGate);
+    if (nearGate || state.zone === 'town') {
+      if (document.getElementById('townPanel').style.display === 'none') openTownPanel(); else closeTownPanel();
+    }
+  }
+  if ((e.key === 'b' || e.key === 'B') && state.zone === 'town') {
+    if (player.gold >= 10) { player.gold -= 10; player.inventory.push('Town Tonic'); toast('Bought Town Tonic'); saveProgress(); }
+    else toast('Not enough gold');
+  }
+  if ((e.key === 'r' || e.key === 'R') && state.zone === 'town') {
+    const q = getQuest('q_vampire');
+    if (q.status === 'NotStarted') { setQuest('q_vampire',{status:'Active',stage:1,objective:'Find the Crypt Key beyond town gate.'}); toast('Quest started: Whispers Below Chapel'); }
+    else if (q.status === 'Active' && q.stage === 2) { setQuest('q_vampire',{stage:3,objective:'Return to Nyra with the key.'}); toast('Return to Nyra in town'); }
+    else if (q.status === 'Active' && q.stage === 3 && player.inventory.includes('Crypt Key')) {
+      setQuest('q_vampire',{status:'Completed',stage:4,objective:'You embraced the night and became vampire-marked.'});
+      player.reputation += 2; player.gold += 40; if(!player.perks.includes('Nightmarked')) player.perks.push('Nightmarked');
+      toast('Vampire path complete: Nightmarked (+40g)');
+      saveProgress();
+    }
+  }
+  if (e.key === 'h' || e.key === 'H') {
+    const hp = document.getElementById('helpPanel');
+    hp.style.display = hp.style.display === 'none' ? 'block' : 'none';
+  }
+});
+addEventListener('keyup', e => keys.delete(e.key));
+
+function overlap(a,b){return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y}
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+
+function saveProgress(){
+  localStorage.setItem(PROG_KEY, JSON.stringify({player, state:{selectedClass:state.selectedClass, zone:state.zone}, quests}));
+}
+function loadProgress(){
+  try{
+    const raw = localStorage.getItem(PROG_KEY);
+    if(!raw) return;
+    const data = JSON.parse(raw);
+    if(data.player){
+      Object.assign(player, data.player);
+      if(data.player.skills) player.skills = data.player.skills;
+      if(data.player.skillXP) player.skillXP = data.player.skillXP;
+      if(Array.isArray(data.player.perks)) player.perks = data.player.perks;
+    }
+    if(data.state && data.state.selectedClass) state.selectedClass = true;
+    if(data.state && data.state.zone) state.zone = data.state.zone;
+    if(Array.isArray(data.quests)){
+      for (const q of data.quests){
+        const localQ = quests.find(x => x.id === q.id);
+        if(localQ) Object.assign(localQ, q);
+      }
+    }
+  }catch(e){ console.warn('progress load failed', e); }
+}
+function toast(msg){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=>{ el.style.display='none'; }, 2200);
+}
+function applyClassChoice(){
+  if(state.selectedClass) return;
+  const key = (localStorage.getItem('scrolls-class-choice') || 'Knight').trim();
+  const cls = classes[key] || classes.Knight;
+  player.className = classes[key] ? key : 'Knight';
+  for (const k of Object.keys(cls)) player.skills[k] += cls[k];
+  state.selectedClass = true;
+  localStorage.setItem('scrolls-class-choice', player.className);
+  toast('Class chosen: ' + player.className + ' (change in code if desired)');
+  saveProgress();
+}
+function gainSkill(skill, amount){
+  player.skillXP[skill] = (player.skillXP[skill] || 0) + amount;
+  const threshold = 30 + Math.floor(player.skills[skill] * 1.4);
+  if(player.skillXP[skill] >= threshold && player.skills[skill] < 100){
+    player.skillXP[skill] = 0;
+    player.skills[skill] += 1;
+    toast(skill + ' increased to ' + player.skills[skill]);
+    checkPerks(skill);
+    saveProgress();
+  }
+}
+function checkPerks(skill){
+  for(const p of (perkTable[skill]||[])){
+    if(player.skills[skill] >= p.lvl && !player.perks.includes(p.id)){
+      player.perks.push(p.id);
+      toast('Perk unlocked: ' + p.id);
+    }
+  }
+}
+
+
+function getQuest(id){ return quests.find(q => q.id === id); }
+function setQuest(id, patch){ const q=getQuest(id); if(!q) return; Object.assign(q, patch); saveProgress(); }
+function updateQuestPanel(){
+  const el=document.getElementById('questPanel');
+  const active=quests.filter(q=>q.status!=='Completed');
+  el.innerHTML='<strong>Quest Log</strong><br>' + active.map(q=> '- [' + q.status + '] ' + q.name + ': ' + q.objective).join('<br>');
+}
+function openTownPanel(){
+  const p=document.getElementById('townPanel');
+  p.style.display='block';
+  const vamp=getQuest('q_vampire');
+  const relic=getQuest('q_relic');
+  p.innerHTML='<strong>'+town.name+' Vendors</strong><br>' + town.vendors.map(v=>v.name+' ('+v.type+')').join(' | ') +
+    '<br>Gold: '+player.gold+' | Reputation: '+player.reputation +
+    '<br><em>Actions:</em> [B]uy tonic (10g), [R]umor from Nyra, [T] close town panel.' +
+    '<br>Vampire Quest: '+vamp.status+' | Stage '+vamp.stage +
+    '<br>Relic Quest: '+relic.status+' | Stage '+relic.stage;
+}
+function closeTownPanel(){ document.getElementById('townPanel').style.display='none'; }
+
+
+function updateHelpPanel(){
+  const hp=document.getElementById('helpPanel');
+  hp.innerHTML='<strong>Controls</strong><br>←/→ Move | Space/↑ Jump | Shift Sprint | T Town | B Buy | R Rumor/Quest | H Toggle Help<br><strong>Goal</strong><br>Collect scrolls, progress quests, return to town for rewards.';
+}
+
+function updateHud(){
+  const left = document.getElementById('left');
+  const right = document.getElementById('right');
+  left.innerHTML = '<span><span class="tag">Class</span> ' + player.className + '</span>' +
+    '<span><span class="tag">Lvl</span> ' + player.level + '</span>' +
+    '<span><span class="tag">Zone</span> ' + state.zone + '</span>' +
+    '<span><span class="tag">Scrolls</span> ' + score + '/' + scrolls.length + '</span>';
+  right.innerHTML = '<span><span class="tag">Stamina</span> ' + Math.round(state.stamina) + '/' + state.maxStamina + '</span>' +
+    '<span><span class="tag">Athletics</span> ' + Math.floor(player.skills.athletics) + '</span>' +
+    '<span><span class="tag">Blade</span> ' + Math.floor(player.skills.blade) + '</span>' +
+    '<span><span class="tag">Perks</span> ' + player.perks.length + '</span>' +
+    '<span><span class="tag">Gold</span> ' + player.gold + '</span>' +
+    '<span><span class="tag">Vendors</span> ' + town.vendors.length + '</span>';
+}
+
+function tick(){
+  const movingRight = keys.has('ArrowRight');
+  const movingLeft = keys.has('ArrowLeft');
+  const wantsSprint = keys.has('Shift');
+  const canSprint = state.sprintEnabled && state.stamina > 1;
+  const sprinting = wantsSprint && canSprint && (movingLeft || movingRight);
+
+  const walkSpeed = 2.9;
+  const sprintSpeed = 4.7;
+  const speed = sprinting ? sprintSpeed : walkSpeed;
+
+  if(movingRight) hero.x += speed;
+  if(movingLeft) hero.x -= speed;
+
+  if (sprinting) {
+    state.stamina = clamp(state.stamina - state.sprintDrain, 0, state.maxStamina);
+    gainSkill('athletics', 0.55);
+  } else {
+    state.stamina = clamp(state.stamina + state.sprintRegen, 0, state.maxStamina);
+  }
+
+  if((keys.has(' ') || keys.has('ArrowUp')) && hero.onGround){ hero.vy = -10.2; hero.onGround = false; }
+  hero.vy += 0.48; hero.y += hero.vy; hero.onGround = false;
+
+  const floor = {x:0,y:390,w:cvs.width,h:30};
+  if(overlap(hero, floor) && hero.vy >= 0){ hero.y = floor.y - hero.h; hero.vy = 0; hero.onGround = true; }
+  for(const p of platforms){ if(overlap(hero,p) && hero.vy >=0 && hero.y + hero.h - hero.vy <= p.y + 2){ hero.y = p.y - hero.h; hero.vy = 0; hero.onGround = true; } }
+
+  hero.x = clamp(hero.x, 0, cvs.width - hero.w);
+
+  for(const s of scrolls){
+    if(!s.collected){
+      const b={x:s.x,y:s.y,w:18,h:18};
+      if(overlap(hero,b)){ s.collected=true; score++; gainSkill('blade', 0.4);
+        const rq = getQuest('q_relic');
+        if (rq.status === 'NotStarted') setQuest('q_relic',{status:'Active',stage:1,objective:'Recover all field scrolls.'});
+      }
+    }
+  }
+
+  if (overlap(hero, townGate)) state.zone = 'town';
+
+  // Render
+  ctx.fillStyle='#090b10'; ctx.fillRect(0,0,cvs.width,cvs.height);
+  ctx.fillStyle='#1f2433'; ctx.fillRect(0,390,cvs.width,30);
+  for(const p of platforms){ ctx.fillStyle='#3f465b'; ctx.fillRect(p.x,p.y,p.w,p.h); }
+
+  // Town gate
+  ctx.fillStyle = '#5d4b35'; ctx.fillRect(townGate.x,townGate.y,townGate.w,townGate.h);
+  ctx.fillStyle = '#d3b07a'; ctx.fillRect(townGate.x+4,townGate.y+6, townGate.w-8, 4);
+
+  ctx.fillStyle='#7ad0d0'; ctx.fillRect(hero.x, hero.y, hero.w, hero.h);
+  for(const s of scrolls){ if(!s.collected){ ctx.fillStyle='#bc9b5d'; ctx.fillRect(s.x,s.y,18,18); } }
+
+  ctx.fillStyle='#e8dec8'; ctx.font='18px Georgia';
+  if(state.zone === 'town'){
+    ctx.fillText('Town: ' + town.name + ' (E to return to wilds)', 12, 24);
+    ctx.fillText('Vendors: ' + town.vendors.map(v=>v.name).join(' | '), 12, 48);
+  } else {
+    ctx.fillText('Wilderness: bring relics home alive.', 12, 24);
+  }
+
+  if(score===scrolls.length){
+    const rq=getQuest('q_relic');
+    if(rq.status!=='Completed'){ setQuest('q_relic',{status:'Completed',stage:2,objective:'Return to Dreadmoor for payment.'}); player.gold += 25; player.reputation += 1; toast('Relic Recovery complete (+25g)'); }
+    const vq=getQuest('q_vampire');
+    if(vq.status==='Active' && vq.stage===1){ setQuest('q_vampire',{stage:2,objective:'Bring the Crypt Key to Nyra (press R in town).'}); if(!player.inventory.includes('Crypt Key')) player.inventory.push('Crypt Key'); }
+    ctx.fillText('All scrolls recovered. The crypt waits…', 300, 24);
+  }
+
+  updateHud();
+  updateHelpPanel();
+  updateQuestPanel();
+  requestAnimationFrame(tick);
+}
+loadProgress();
+applyClassChoice();
+updateHud();
+tick();
+<\/script></body></html>`;
+
+    const codeEl = document.getElementById('code');
+    const iframe = document.getElementById('preview');
+    const STORAGE_KEY = 'scrolls-game-code';
+    codeEl.value = localStorage.getItem(STORAGE_KEY) || defaultGame;
+
+    function run() {
+      const html = codeEl.value;
+      localStorage.setItem(STORAGE_KEY, html);
+      iframe.srcdoc = html;
+      setTimeout(() => iframe.focus(), 0);
+    }
+
+    function downloadCurrentGame() {
+      const blob = new Blob([codeEl.value], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'odyssey-of-the-rings-game.html';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+
+    function downloadPlaytestBuild() {
+      const stamp = new Date().toISOString().slice(0,10);
+      const build = codeEl.value
+        .replace('</title>', ' - Playtest Build</title>')
+        .replace('</body>', '<!-- Playtest build exported '+stamp+' -->\n</body>');
+      const blob = new Blob([build], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `odyssey-of-the-rings-playtest-${stamp}.html`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function generateDownloadLink() {
+      const { blob, stamp } = buildPlaytestBlob();
+      const url = URL.createObjectURL(blob);
+      const link = document.getElementById('downloadLink');
+      link.href = url;
+      link.download = `odyssey-of-the-rings-playtest-${stamp}.html`;
+      document.getElementById('downloadLinkWrap').style.display = 'block';
+    }
+
+    async function downloadZipProject() {
+      if (!window.JSZip) {
+        alert('ZIP library failed to load. Please check your internet connection and try again.');
+        return;
+      }
+
+      const zip = new JSZip();
+      const assets = zip.folder('assets');
+      const gameHtml = codeEl.value;
+      const readme = `# Odyssey of the Rings (Exported Project)
+
+## Run
+1. Unzip this folder.
+2. Open \`index.html\` in a browser.
+
+## Files
+- \`index.html\`: your exported game code
+- \`assets/\`: place images/audio here if you expand the game
+`;
+
+      zip.file('index.html', gameHtml);
+      zip.file('README.md', readme);
+      assets.file('.gitkeep', '');
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'odyssey-of-the-rings-project.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('playBtn').addEventListener('click', run);
+    document.getElementById('runBtn').addEventListener('click', run);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      codeEl.value = defaultGame;
+      run();
+    });
+    document.getElementById('downloadBtn').addEventListener('click', downloadCurrentGame);
+    document.getElementById('downloadZipBtn').addEventListener('click', () => {
+      downloadZipProject().catch((err) => {
+        console.error(err);
+        alert('Failed to build ZIP project.');
+      });
+    });
+
+    document.getElementById('downloadPlaytestBtn').addEventListener('click', downloadPlaytestBuild);
+    document.getElementById('generateLinkBtn').addEventListener('click', generateDownloadLink);
+
+    document.getElementById('clearProgressBtn').addEventListener('click', () => {
+      localStorage.removeItem('scrolls-phase2-progress');
+      localStorage.removeItem('scrolls-class-choice');
+      alert('Progress cleared. Click Reset Default then Play Game.');
+    });
+
+    codeEl.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        run();
+      }
+    });
+
+    run();
+  </script>
+</body>
+</html>
